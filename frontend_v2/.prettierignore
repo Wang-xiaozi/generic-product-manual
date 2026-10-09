@@ -1,0 +1,6 @@
+public/_thirdparty/
+public/vendor/
+dist/
+node_modules/
+src/components/product-manual/_thirdparty/
+src/components/product-manual/ManualWorkspace.vue

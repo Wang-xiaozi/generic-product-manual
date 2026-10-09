@@ -1,0 +1,17 @@
+# Supported deployment target: Windows 10/11 x64, Python 3.13.2 x64
+
+# Web API
+fastapi==0.141.1
+uvicorn==0.53.0
+python-multipart==0.0.32
+
+# Existing layout pipeline
+numpy==2.2.6
+shapely==2.1.2
+ezdxf==1.4.4
+Pillow==12.1.1
+pywin32==311
+pyparsing==3.3.2
+typing_extensions==4.15.0
+fonttools==4.63.0
+

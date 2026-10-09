@@ -1,0 +1,9 @@
+{
+  "product_manual": {
+    "max_tdb_size": 536870912,
+    "default_tdb_name": "layout.tdb",
+    "health_name": "Pre-installed Manual",
+    "frontend_stack": ["Vue 3", "JavaScript", "Element Plus"],
+    "backend_stack": "FastAPI"
+  }
+}
