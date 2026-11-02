@@ -216,7 +216,9 @@ class ContractApiTests(unittest.TestCase):
 
     def test_missing_vc90_mfc_has_actionable_error(self) -> None:
         """确认 L-Edit 依赖缺失时返回明确诊断。"""
-        def fail_launch(_filename: str, _payload: bytes) -> dict[str, object]:
+        def fail_launch(
+            _filename: str, _payload: bytes, _process_node: str | None = None
+        ) -> dict[str, object]:
             raise LayoutServiceError("OSError: [WinError 14001] side-by-side")
 
         self.app.state.product_manual_service.layout_service.generate = fail_launch

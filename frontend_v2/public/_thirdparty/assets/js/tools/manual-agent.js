@@ -41,6 +41,7 @@
     "修改页眉中的芯片名称：{\"op\":\"manual.set_chip_name\",\"target\":\"manual\",\"args\":{\"name\":\"芯片名称\"},\"reason\":\"原因\"}。目标是第一页右上方副标题中的芯片名称，并同步其余页页眉，保留后面的工作频率。",
     "修改典型曲线：{\"op\":\"curve.update\",\"target\":\"典型曲线列表中真实的曲线 id\",\"args\":{\"lineWidth\":6},\"reason\":\"原因\"}。按图名定位，仅在 args 中提供用户要求修改的字段。可修改字段及当前值见典型曲线列表的 config 和 editableFields，包括 templateId、title、xTitle、xUnitLabel、yTitle、yUnitLabel、y2Title、y2UnitLabel、xUnit、lineWidth、fontSize、legendLabels、xMin、xMax、yMin、yMax、y2Min、y2Max。",
     "曲线字段对应编辑弹窗中的曲线类型、图名、各轴标题和单位、频率缩放单位、线宽、字体大小、图例标题及各轴最大最小值。曲线类型须从典型曲线章节的 templateOptions 中选择。用户要求修改 X 轴单位时，同时设置 xUnit 和 xUnitLabel；修改显示范围时设置对应轴的 Min 和 Max。",
+    "【】只是模板占位提示，用户删除括号后仍按明确的修改要求生成 curve.update；同时设置线宽、字号和坐标范围时，应包含全部要求，不要改成读取频率点数值。",
     "曲线参数约束：lineWidth 为 1.5 到 6；fontSize 为 12 到 36 的整数；xUnit 可为 auto、GHz、MHz、kHz、Hz；坐标范围值为数字，null 表示自动。若用户同时修改频率缩放单位和 X 范围，X 范围数字应与新单位一致。只修改具备 curve.update capability 的已导入曲线；同名曲线无法唯一确定时请说明。",
     "内容已经存在时不要重复追加，返回 operations 为空并在 message 中说明；目标不存在或无法确定时也不要猜测。",
     "target 只能引用输入中真实存在的字段、章节或条目 id；不得杜撰器件参数。用户没有提供且上下文无法确定的技术数据应留空或说明需要补充。"
@@ -389,7 +390,7 @@
   function curveFrequencyReadout(prompt) {
     var match = String(prompt || "").match(/(\d+(?:\.\d+)?)\s*(GHz|MHz|kHz|Hz)\b/i);
     var metrics = curveMetricsFromQuestion(prompt);
-    if (!match || !metrics.length || /修改|设置|替换|改成|删除|新增|绘制|生成|调整/.test(prompt)) return null;
+    if (!match || !metrics.length || hasModificationIntent(prompt)) return null;
     var inputUnit = ({ ghz: "GHz", mhz: "MHz", khz: "kHz", hz: "Hz" })[match[2].toLowerCase()];
     var requestedHz = Number(match[1]) * frequencyScale(inputUnit);
     if (!Number.isFinite(requestedHz)) return null;
@@ -431,7 +432,7 @@
   function isCurveQuestion(prompt) {
     return /曲线|S\s*参数|S21|Gain|增益|驻波|VSWR|噪声系数|P1dB|隔离度/i.test(prompt) &&
       /多少|是多少|读数|数值|趋势|走势|最高|最低|最大|最小|峰值|谷值|变化|比较|如何|为什么|什么|哪|？|\?/i.test(prompt) &&
-      !/修改|设置|替换|改成|删除|新增|绘制|生成|调整/.test(prompt);
+      !hasModificationIntent(prompt);
   }
 
   function curveQuestionSummary(prompt) {
@@ -588,7 +589,7 @@
     var args = operation.args || {};
     if (operation.op === "manual.set_model") {
       var model = normalizedText(args.model);
-      if (!/^NC[A-Za-z0-9]+-[A-Za-z0-9]+$/i.test(model)) return null;
+      if (!/^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(model)) return null;
       addManualEdit(edits, currentTreeLabel(), model, "产品目录");
       manual.querySelectorAll(".model").forEach(function (node, index) {
         addManualEdit(edits, node, model, "第 " + (index + 1) + " 页页眉型号");
@@ -1101,71 +1102,124 @@
     return clause;
   }
 
-  function parseCurveWidthRequest(prompt) {
-    var text = String(prompt || "").trim();
-    var match = text.match(/^(?:请)?[将把]典型曲线中(?:的)?(.+?)的曲线(?:增粗|线宽(?:设置|调整|修改)?)(?:为|到|成)\s*(\d+(?:\.\d+)?)(?:\s*(?:px|像素))?[。！!]?$/i) ||
-      text.match(/^(?:请)?[将把]典型曲线中(?:的)?(.+?)的线宽(?:设置|调整|修改|改)?(?:为|到|成)\s*(\d+(?:\.\d+)?)(?:\s*(?:px|像素))?[。！!]?$/i);
-    if (!match) return null;
-    return {
-      title: match[1].trim().replace(/^图名(?:为|是)\s*[“"'「]?/, "").replace(/[”"'」]$/, ""),
-      args: { lineWidth: Number(match[2]) }
-    };
+  function normalizeCurvePrompt(value) {
+    return String(value || "").replace(/[【】]/g, "").trim();
+  }
+
+  function hasModificationIntent(prompt) {
+    var text = normalizeCurvePrompt(prompt);
+    return /修改|更改|设置|替换|改成|删除|新增|绘制|生成|调整|设为|设成|设到|改为|改到|增粗/.test(text) ||
+      /(?:线宽|字体大小|字号|轴(?:显示|截取)?范围|轴单位|频率缩放单位|图名)\s*[=＝]/i.test(text);
+  }
+
+  function canonicalCurveUnit(unit) {
+    return ({ auto: "auto", ghz: "GHz", mhz: "MHz", khz: "kHz", hz: "Hz" })[String(unit).toLowerCase()];
+  }
+
+  function parseCurveAction(action) {
+    var assignment = "\\s*(?:(?:设置|调整|修改|更改|设|改)?(?:为|到|成)|[=＝])\\s*";
+    var number = "([+-]?\\d+(?:\\.\\d+)?)";
+    var value;
+    var args = {};
+    if ((value = action.match(new RegExp("^(?:曲线)?(线宽|增粗|字体大小|字号)" + assignment + number + "(?:\\s*(?:px|像素))?$", "i")))) {
+      args[/线宽|增粗/.test(value[1]) ? "lineWidth" : "fontSize"] = Number(value[2]);
+    } else if ((value = action.match(new RegExp("^X\\s*轴单位" + assignment + "(GHz|MHz|kHz|Hz)$", "i")))) {
+      args.xUnit = canonicalCurveUnit(value[1]);
+      args.xUnitLabel = args.xUnit;
+    } else if ((value = action.match(new RegExp("^频率缩放单位" + assignment + "(auto|GHz|MHz|kHz|Hz)$", "i")))) {
+      args.xUnit = canonicalCurveUnit(value[1]);
+    } else if ((value = action.match(new RegExp("^(?:右\\s*Y|Y2)\\s*轴单位" + assignment + "(.+)$", "i")))) {
+      args.y2UnitLabel = value[1].trim();
+    } else if ((value = action.match(new RegExp("^Y\\s*轴单位" + assignment + "(.+)$", "i")))) {
+      args.yUnitLabel = value[1].trim();
+    } else if ((value = action.match(new RegExp("^图名" + assignment + "(.+)$")))) {
+      args.title = value[1].trim();
+    } else if ((value = action.match(new RegExp("^(右\\s*Y|Y2|X|Y)\\s*轴(?:显示|截取)?范围" + assignment +
+        number + "\\s*(GHz|MHz|kHz|Hz)?\\s*[-~～—–至到]\\s*" + number + "\\s*(GHz|MHz|kHz|Hz)?$", "i")))) {
+      var axis = /^右|^Y2/i.test(value[1]) ? "y2" : value[1].toLowerCase();
+      if (axis === "x" && (value[3] || value[5])) {
+        return { args: args, frequencyRange: {
+          start: Number(value[2]), end: Number(value[4]),
+          startUnit: value[3] ? canonicalCurveUnit(value[3]) : null,
+          endUnit: value[5] ? canonicalCurveUnit(value[5]) : null
+        } };
+      }
+      if (value[3] || value[5]) return null;
+      args[axis + "Min"] = Number(value[2]);
+      args[axis + "Max"] = Number(value[4]);
+    } else {
+      return null;
+    }
+    return { args: args };
   }
 
   function parseCurveUpdateRequest(prompt) {
-    var widthRequest = parseCurveWidthRequest(prompt);
-    if (widthRequest) return widthRequest;
-    var text = String(prompt || "").trim().replace(/[。！!]$/, "");
-    var match = text.match(/^(?:请)?[将把]典型曲线中(?:的)?(.+?)的(.+)$/);
+    var text = normalizeCurvePrompt(prompt).replace(/^[：:·•\s]+/, "").replace(/[。！!]+$/, "");
+    var prefix = /^(?:请)?[将把]典型曲线中(?:的)?\s*/;
+    if (!prefix.test(text)) return null;
+    var body = text.replace(prefix, "");
+    if (/【\s*】/.test(prompt) || /曲线名称|起始频率|截止频率|之间的数值|之间的整数/.test(body)) {
+      return { error: "请先把模板中的曲线名称和参数填写为实际内容；【】可以保留，也可以删除。" };
+    }
+    var assignment = "\\s*(?:(?:设置|调整|修改|更改|设|改)?(?:为|到|成)|[=＝])";
+    var fields = "(?:曲线)?(?:线宽|增粗)|字体大小|字号|(?:右\\s*Y|Y2|X|Y)\\s*轴(?:(?:显示|截取)?范围|单位)|频率缩放单位|图名";
+    var match = body.match(new RegExp("^(.+?)(?:的)?((?:" + fields + ")" + assignment + "[\\s\\S]*)$", "i"));
     if (!match) return null;
-    var title = match[1].trim().replace(/^图名(?:为|是)\s*[“"'「]?/, "").replace(/[”"'」]$/, "");
-    var action = match[2].trim();
-    var value;
-    var range;
+    var title = match[1].trim().replace(/^图名(?:为|是)\s*/, "")
+      .replace(/^[“"'「]|[”"'」]$/g, "").trim();
+    var actions = match[2].split(/[，,；;]/).map(function (action) { return action.trim(); }).filter(Boolean);
     var args = {};
-    if ((value = action.match(/^字体大小(?:设置|调整|修改|设|改)?(?:为|到|成)\s*(\d+(?:\.\d+)?)$/))) {
-      args.fontSize = Number(value[1]);
-    } else if ((value = action.match(/^X\s*轴单位(?:设置|调整|修改|设|改)?(?:为|到|成)\s*(GHz|MHz|kHz|Hz)$/i))) {
-      args.xUnit = value[1];
-      args.xUnitLabel = value[1];
-    } else if ((value = action.match(/^频率缩放单位(?:设置|调整|修改|设|改)?(?:为|到|成)\s*(auto|GHz|MHz|kHz|Hz)$/i))) {
-      args.xUnit = value[1];
-    } else if ((value = action.match(/^(?:右\s*Y|Y2)\s*轴单位(?:设置|调整|修改|设|改)?(?:为|到|成)\s*(.+)$/i))) {
-      args.y2UnitLabel = value[1].trim();
-    } else if ((value = action.match(/^Y\s*轴单位(?:设置|调整|修改|设|改)?(?:为|到|成)\s*(.+)$/i))) {
-      args.yUnitLabel = value[1].trim();
-    } else if ((value = action.match(/^图名(?:设置|调整|修改|设|改)?(?:为|到|成)\s*(.+)$/))) {
-      args.title = value[1].trim();
-    } else if ((range = action.match(/^(右\s*Y|Y2|X|Y)\s*轴(?:显示|截取)?范围(?:设置|调整|修改|设|改)?(?:为|到|成)\s*(-?\d+(?:\.\d+)?)\s*(GHz|MHz|kHz|Hz)?\s*[-~～—–至到]\s*(-?\d+(?:\.\d+)?)\s*(GHz|MHz|kHz|Hz)?$/i))) {
-      var axis = /^右|^Y2/i.test(range[1]) ? "y2" : range[1].toLowerCase();
-      args[axis + "Min"] = Number(range[2]);
-      args[axis + "Max"] = Number(range[4]);
-      var unit = range[3] || range[5];
-      if (axis === "x" && unit) {
-        args.xUnit = unit;
-        args.xUnitLabel = unit;
+    var frequencyRange = null;
+    for (var index = 0; index < actions.length; index += 1) {
+      var parsed = parseCurveAction(actions[index]);
+      if (!parsed) {
+        // 未支持的复杂动作整体交给模型，已解析的属性不单独应用。
+        if (!new RegExp("^(?:" + fields + ")" + assignment, "i").test(actions[index])) return null;
+        return { error: "无法识别曲线参数“" + actions[index] + "”，请填写明确的数字、单位或完整范围。" };
       }
-    } else {
-      return null;
+      if (parsed.frequencyRange) {
+        if (frequencyRange || Object.prototype.hasOwnProperty.call(args, "xMin")) {
+          return { error: "同一指令中请只设置一次 X 轴范围。" };
+        }
+        frequencyRange = parsed.frequencyRange;
+      }
+      var keys = Object.keys(parsed.args);
+      for (var keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+        var key = keys[keyIndex];
+        if ((frequencyRange && (key === "xMin" || key === "xMax")) ||
+            (Object.prototype.hasOwnProperty.call(args, key) && args[key] !== parsed.args[key])) {
+          return { error: "同一指令中重复设置了不同的曲线参数，请保留唯一取值。" };
+        }
+        args[key] = parsed.args[key];
+      }
+    }
+    if (frequencyRange) {
+      if (args.xUnit === "auto") return { error: "设置带单位的 X 轴范围时，请使用明确的频率单位。" };
+      var unit = args.xUnit || frequencyRange.startUnit || frequencyRange.endUnit;
+      args.xMin = frequencyRange.start * frequencyScale(frequencyRange.startUnit || unit) / frequencyScale(unit);
+      args.xMax = frequencyRange.end * frequencyScale(frequencyRange.endUnit || unit) / frequencyScale(unit);
+      args.xUnit = unit;
+      args.xUnitLabel = unit;
     }
     return { title: title, args: args };
   }
 
   function normalizeCurveTitle(value) {
-    return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
+    return normalizeCurvePrompt(value).replace(/\s+/g, " ").toLowerCase();
   }
 
   function resolveCurveInstruction(prompt) {
     var request = parseCurveUpdateRequest(prompt);
     if (!request) return { recognized: false };
+    if (request.error) return { recognized: true, message: request.error };
     annotateManualStructure();
     var title = normalizeCurveTitle(request.title);
     var curves = Array.from(manual.querySelectorAll(".curve-embed"));
     var matches = curves.filter(function (embed) {
       return normalizeCurveTitle(curveTitle(embed)) === title;
     });
-    if (!matches.length && /图$/.test(request.title)) {
-      title = normalizeCurveTitle(request.title.slice(0, -1));
+    if (!matches.length && /(?:曲线|图)$/.test(request.title)) {
+      title = normalizeCurveTitle(request.title.replace(/(?:曲线|图)$/, ""));
       matches = curves.filter(function (embed) {
         return normalizeCurveTitle(curveTitle(embed)) === title;
       });
@@ -1181,7 +1235,13 @@
     if (!curveSupportsUpdate(payload)) return { recognized: true, message: "该曲线是图片，无法通过参数设置重绘。" };
     var current = curveConfigSnapshot(payload);
     var changes = normalizedCurveChanges(request.args, current);
-    if (!changes) return { recognized: true, message: "目标参数已是指定值，或输入值超出曲线编辑器允许的范围。" };
+    if (!changes) {
+      var unchanged = Object.keys(request.args).every(function (key) {
+        return JSON.stringify(request.args[key]) === JSON.stringify(current[key]);
+      });
+      return { recognized: true, message: unchanged ? "目标参数已是指定值。" :
+        "曲线参数无效，未生成部分修改：线宽须为 1.5–6，字体大小须为 12–36 的整数，坐标最小值须小于最大值。" };
+    }
     return {
       recognized: true,
       operation: {
@@ -1196,7 +1256,7 @@
   function inferOperationsFromPrompt(prompt) {
     var text = String(prompt || "").trim().replace(/^[：:·•\s]+/, "");
     var inferred = [];
-    var modelMatch = text.match(/^请[把将](?:当前)?产品手册中(?:的)?全部型号(?:替换|修改|改)成\s*(NC[A-Za-z0-9]+-[A-Za-z0-9]+)[。！!]?$/i);
+    var modelMatch = text.match(/^请[把将](?:当前)?产品手册中(?:的)?全部型号(?:替换|修改|改)成\s*([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)[。！!]?$/i);
     if (modelMatch) return [{
       op: "manual.set_model", target: "manual", args: { model: modelMatch[1] }, reason: "统一产品手册中的型号"
     }];
@@ -1295,7 +1355,7 @@
         history.push({ role: "assistant", content: JSON.stringify(curveResult) });
         return;
       }
-      var curveReadout = curveFrequencyReadout(prompt);
+      var curveReadout = hasModificationIntent(prompt) ? null : curveFrequencyReadout(prompt);
       if (curveReadout) {
         addMessage(curveReadout, "assistant");
         history.push({ role: "assistant", content: JSON.stringify({ message: curveReadout, operations: [] }) });

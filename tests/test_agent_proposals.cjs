@@ -29,11 +29,12 @@ const baseUrl = process.env.MANUAL_TEST_URL || "http://127.0.0.1:5173/product-ma
       });
     });
     await page.goto(baseUrl, { waitUntil: "networkidle" });
+    await page.waitForFunction(() => Boolean(window.ProductManualAgentDispose), null, { timeout: 15000 });
 
     async function send(prompt) {
       await page.locator("[data-agent-input]").fill(prompt);
       await page.locator("[data-agent-send]").click();
-      await page.waitForFunction(() => !document.querySelector("[data-agent-send]").disabled);
+      await page.waitForFunction(() => !document.querySelector("[data-agent-send]").disabled, null, { timeout: 15000 });
       return page.locator("[data-agent-messages] .agent-message--assistant").last().innerText();
     }
 

@@ -24,9 +24,13 @@ export function sendManualChat(payload) {
 
 /**
  * 生成版图产物。
- * @param {FormData} formData 含 tdb_file 的上传数据。
+ * @param {FormData} formData 含 tdb_file 和 process_node 的上传数据。
  * @returns {Promise<Object>} 图像、场景与压点表数据。
  */
+export function listProcessNodes() {
+  return request({ url: `${prefix}/layout/process-nodes` })
+}
+
 export function generateLayoutAssets(formData) {
   return request({
     url: `${prefix}/layout/generate-layout-assets`,

@@ -1,0 +1,14 @@
+{
+  "default_node": "legacy",
+  "nodes": {
+    "legacy": {
+      "label": "原有工艺",
+      "layers": {
+        "pad": "pad",
+        "metal": "M0",
+        "ground_via": "via0",
+        "io_marker": "via2"
+      }
+    }
+  }
+}

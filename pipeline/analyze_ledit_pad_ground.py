@@ -12,6 +12,10 @@ from runtime_bootstrap import bootstrap_vendor
 
 bootstrap_vendor(__file__)
 
+# 独立执行 pipeline 脚本时复用后端的同一套工艺配置读取逻辑。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend_v2"))
+from config.process_nodes import DEFAULT_PROCESS_CONFIG, load_process_config, select_process_node
+
 VENDOR_DIR = Path(__file__).resolve().parent / "vendor"
 
 import ezdxf
@@ -87,6 +91,11 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_PAD_TABLE_SCRIPT,
         help="Helper script used to generate the pad table from the pad-ground analysis report.",
+    )
+    parser.add_argument("--process-node", default=None, help="Configured process node ID.")
+    parser.add_argument(
+        "--process-config", type=Path, default=DEFAULT_PROCESS_CONFIG,
+        help="JSON file mapping process nodes to DXF layer names.",
     )
     return parser.parse_args()
 
@@ -213,7 +222,9 @@ def polygon_from_polyline(entity) -> Polygon | None:
     return None if polygon.is_empty else polygon
 
 
-def detect_io_sides_from_via2(dxf_path: Path, frame_bounds: list[float]) -> dict[str, str]:
+def detect_io_sides_from_via2(
+    dxf_path: Path, frame_bounds: list[float], io_marker_layer: str
+) -> dict[str, str]:
     doc = ezdxf.readfile(dxf_path)
     modelspace = doc.modelspace()
     frame_x1, frame_y1, frame_x2, frame_y2 = frame_bounds
@@ -222,7 +233,7 @@ def detect_io_sides_from_via2(dxf_path: Path, frame_bounds: list[float]) -> dict
 
     via2_polys = []
     for entity in modelspace:
-        if entity.dxftype() != "POLYLINE" or entity.dxf.layer.lower() != "via2":
+        if entity.dxftype() != "POLYLINE" or entity.dxf.layer.strip().casefold() != io_marker_layer.strip().casefold():
             continue
         poly = polygon_from_polyline(entity)
         if poly is None:
@@ -296,9 +307,10 @@ def classify_port_roles(
     *,
     dxf_path: Path,
     frame_bounds: list[float],
+    io_marker_layer: str,
 ) -> dict[str, object]:
     non_ground = [port for port in ports if not bool(port.get("is_ground", False))]
-    side_map = detect_io_sides_from_via2(dxf_path, frame_bounds)
+    side_map = detect_io_sides_from_via2(dxf_path, frame_bounds, io_marker_layer)
     in_side = side_map["in_side"]
     out_side = side_map["out_side"]
 
@@ -411,21 +423,29 @@ def merge_physical_ports(
     return sorted(merged_ports, key=lambda item: (item["source_centroid"][1], item["source_centroid"][0]))
 
 
-def analyze_dxf(dxf_path: Path) -> dict[str, object]:
+def analyze_dxf(dxf_path: Path, process_node: dict[str, object] | None = None) -> dict[str, object]:
+    node = process_node or select_process_node(load_process_config())
+    layers = {role: name.strip().casefold() for role, name in node["layers"].items()}
     doc = ezdxf.readfile(dxf_path)
+    available = {entity.dxf.layer.strip().casefold() for entity in doc.modelspace()}
+    missing = [f"{role}={name}" for role, name in node["layers"].items()
+               if name.strip().casefold() not in available]
+    if missing:
+        actual = ", ".join(sorted({entity.dxf.layer for entity in doc.modelspace()}))
+        raise ValueError(f"工艺节点 {node['id']} 缺少配置层：{', '.join(missing)}；实际层名：{actual}")
     modelspace = doc.modelspace()
 
     all_items: list[dict[str, object]] = []
     text_entities: list[dict[str, object]] = []
     for entity in modelspace:
-        layer = entity.dxf.layer
+        layer = entity.dxf.layer.strip().casefold()
         entity_type = entity.dxftype()
         if entity_type in {"TEXT", "MTEXT", "ATTRIB", "ATTDEF"}:
             text = entity.plain_text() if hasattr(entity, "plain_text") else getattr(entity.dxf, "text", "")
             text_entities.append({"layer": layer, "type": entity_type, "text": text})
         if entity_type != "POLYLINE":
             continue
-        if layer not in {"pad", "M0", "via0"}:
+        if layer not in {layers["pad"], layers["metal"], layers["ground_via"]}:
             continue
         polygon = polygon_from_polyline(entity)
         if polygon is None:
@@ -441,12 +461,14 @@ def analyze_dxf(dxf_path: Path) -> dict[str, object]:
         )
 
     pad_ports = sorted(
-        [item for item in all_items if item["layer"] == "pad" and float(item["area"]) < PAD_AREA_MAX],
+        [item for item in all_items if item["layer"] == layers["pad"] and float(item["area"]) < PAD_AREA_MAX],
         key=lambda item: (item["bounds"][1], item["bounds"][0]),
     )
-    pad_frame = [item for item in all_items if item["layer"] == "pad" and float(item["area"]) >= PAD_AREA_MAX]
-    m0_items = [item for item in all_items if item["layer"] == "M0"]
-    via0_items = [item for item in all_items if item["layer"] == "via0"]
+    pad_frame = [item for item in all_items if item["layer"] == layers["pad"] and float(item["area"]) >= PAD_AREA_MAX]
+    m0_items = [item for item in all_items if item["layer"] == layers["metal"]]
+    via0_items = [item for item in all_items if item["layer"] == layers["ground_via"]]
+    if not pad_ports:
+        raise ValueError(f"工艺节点 {node['id']} 的压点层 {node['layers']['pad']} 未识别到有效压点")
     dimension_frame = build_dimension_frame(pad_frame)
 
     chip_bounds = (
@@ -517,10 +539,14 @@ def analyze_dxf(dxf_path: Path) -> dict[str, object]:
         physical_ports,
         dxf_path=dxf_path,
         frame_bounds=list(frame_bounds),
+        io_marker_layer=node["layers"]["io_marker"],
     )
 
     return {
         "dxf_path": str(dxf_path),
+        "process_node": node["id"],
+        "process_label": node["label"],
+        "process_layers": dict(node["layers"]),
         "pad_frame_count": len(pad_frame),
         "dimension_frame": dimension_frame,
         "port_count": len(analysis_ports),
@@ -1095,6 +1121,8 @@ def render_pad_only(
 
 def main() -> None:
     args = parse_args()
+    # 在启动 L-Edit 前校验节点，配置错误不触发 CAD 导出。
+    node = select_process_node(load_process_config(args.process_config), args.process_node)
     runner_python = resolve_runner_python(args.runner_python)
     tdb_path = ensure_exists(args.tdb_path, "L-Edit TDB file")
     export_script = ensure_exists(args.export_script, "DXF export helper script")
@@ -1122,7 +1150,7 @@ def main() -> None:
         ledit_exe=ledit_path,
         force_refresh=args.force_refresh,
     )
-    report = analyze_dxf(dxf_path)
+    report = analyze_dxf(dxf_path, node)
     report["tdb_path"] = str(tdb_path)
     report["explicit_port_properties_available"] = bool(report["explicit_property_entities_found"])
     frame_bounds = report["dimension_frame"]["bounds"] if report["dimension_frame"] is not None else None

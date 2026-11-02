@@ -11,6 +11,10 @@ from runtime_bootstrap import bootstrap_vendor
 
 bootstrap_vendor(__file__)
 
+# 独立命令行入口也先验证工艺配置，避免配置错误时启动 L-Edit。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend_v2"))
+from config.process_nodes import DEFAULT_PROCESS_CONFIG, load_process_config, select_process_node
+
 import win32con
 import win32gui
 import win32gui_struct
@@ -90,6 +94,11 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=DEFAULT_LEDIT_WINDOW_TITLE_HINT,
         help="Visible window-title substring used to locate the L-Edit main window.",
+    )
+    parser.add_argument("--process-node", default=None, help="Configured process node ID.")
+    parser.add_argument(
+        "--process-config", type=Path, default=DEFAULT_PROCESS_CONFIG,
+        help="Process-node JSON file.",
     )
     return parser.parse_args()
 
@@ -531,6 +540,7 @@ def export_tdb_to_dxf(
 
 def main() -> None:
     args = parse_args()
+    select_process_node(load_process_config(args.process_config), args.process_node)
     runner_python = resolve_runner_python(args.runner_python)
     tdb_path = ensure_exists(args.tdb_path, "L-Edit TDB file")
     ledit_exe = resolve_ledit_executable(args.ledit_exe)
@@ -572,6 +582,10 @@ def main() -> None:
         "--ledit-exe",
         str(ledit_exe),
     ]
+    if args.process_node is not None:
+        command.extend(["--process-node", args.process_node])
+    if args.process_config is not None:
+        command.extend(["--process-config", str(args.process_config.resolve())])
     if args.force_refresh:
         command.append("--force-refresh")
     run_command(command, "Generate dimension drawing / assembly drawing / pad table from TDB")

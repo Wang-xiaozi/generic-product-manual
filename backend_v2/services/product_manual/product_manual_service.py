@@ -61,10 +61,16 @@ class ProductManualService:
         """转交原对话校验与请求；返回模型回复。"""
         return self.model_gateway.chat(messages)
 
-    def generate_layout(self, filename: str, payload: bytes) -> dict[str, Any]:
+    def list_process_nodes(self) -> dict[str, Any]:
+        """读取可用节点，刷新网页即可取得配置文件的新内容。"""
+        return self.layout_service.list_process_nodes()
+
+    def generate_layout(
+        self, filename: str, payload: bytes, process_node: str | None = None
+    ) -> dict[str, Any]:
         """调用原版图生成流程；返回图像和场景数据。"""
         try:
-            return self.layout_service.generate(filename, payload)
+            return self.layout_service.generate(filename, payload, process_node)
         except LayoutServiceError as exc:
             if "WinError 14001" in exc.message:
                 raise LayoutServiceError(
@@ -74,7 +80,9 @@ class ProductManualService:
                 ) from exc
             raise
 
-    def generate_layout_upload(self, filename: str | None, source: BinaryIO) -> dict[str, Any]:
+    def generate_layout_upload(
+        self, filename: str | None, source: BinaryIO, process_node: str | None = None
+    ) -> dict[str, Any]:
         """读取并校验上传文件，再生成版图；返回原业务字段。"""
         config = self.settings.business["product_manual"]
         max_size = int(config["max_tdb_size"])
@@ -82,4 +90,4 @@ class ProductManualService:
         if len(payload) > max_size:
             size_mb = max_size / (1024 * 1024)
             raise LayoutServiceError(f".tdb 文件不能超过 {size_mb:g} MB", status_code=413)
-        return self.generate_layout(filename or config["default_tdb_name"], payload)
+        return self.generate_layout(filename or config["default_tdb_name"], payload, process_node)

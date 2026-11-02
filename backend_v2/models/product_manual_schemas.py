@@ -84,6 +84,9 @@ class LayoutAssetsResponse(BaseModel):
     """返回原版图生成字段，保留场景对象结构。"""
 
     model_id: str
+    process_node: str
+    process_label: str
+    process_layers: dict[str, str]
     dimension_image_data_url: str
     function_block_image_data_url: str
     function_block_scene: dict[str, Any]

@@ -8,6 +8,7 @@ import {
 } from '../../../../product-manual-prompt-templates.js'
 import {
   generateLayoutAssets,
+  listProcessNodes,
   getTemplateDownloadUrl,
   requestLegacy,
 } from '@/api/product-manual/product-manual-api.js'
@@ -78,6 +79,7 @@ onMounted(async () => {
   window.ProductManualApi = {
     requestLegacy,
     generateLayoutAssets,
+    listProcessNodes,
     snpDirectoryPath: appConfig.snpDirectoryPath,
   }
   try {
@@ -626,6 +628,13 @@ onBeforeUnmount(() => {
               <button class="btn" type="button" data-pick-tdb-file>&#36873;&#25321; TDB &#25991;&#20214;</button>
               <button class="btn" type="button" data-generate-layout-assets>&#29983;&#25104;&#20135;&#29289;</button>
             </div>
+            <label class="curve-field">
+              工艺节点
+              <select data-process-node disabled aria-label="工艺节点">
+                <option value="">正在读取工艺节点…</option>
+              </select>
+            </label>
+            <p class="tool-hint" data-process-layers></p>
             <input class="hidden-input" type="file" accept=".tdb" data-tdb-file-input>
             <label class="curve-field">
               &#24050;&#36873;&#29256;&#22270;&#25991;&#20214;

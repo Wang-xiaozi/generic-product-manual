@@ -4,6 +4,35 @@
   var registry = window.ProductManualTemplateTools = window.ProductManualTemplateTools || {};
   var latestLayoutResult = null;
   var selectedTdbFile = null;
+  var isGenerating = false;
+  var processNodes = [];
+
+  function selectedProcessNode(doc) {
+    var select = doc.querySelector("[data-process-node]");
+    return select ? select.value : "";
+  }
+
+  function updateProcessLayers(doc) {
+    var label = doc.querySelector("[data-process-layers]");
+    var node = processNodes.find(function (item) { return item.id === selectedProcessNode(doc); });
+    if (label) label.textContent = node ? (
+      "压点：" + node.layers.pad + "；金属连接：" + node.layers.metal +
+      "；接地通孔：" + node.layers.ground_via + "；方向识别：" + node.layers.io_marker
+    ) : "";
+  }
+
+  function updateLayoutButtons(doc) {
+    var select = doc.querySelector("[data-process-node]");
+    var generate = doc.querySelector("[data-generate-layout-assets]");
+    var apply = doc.querySelector("[data-apply-layout-results]");
+    var pick = doc.querySelector("[data-pick-tdb-file]");
+    var file = doc.querySelector("[data-tdb-file-input]");
+    if (select) select.disabled = isGenerating || !processNodes.length;
+    if (generate) generate.disabled = isGenerating || !selectedProcessNode(doc);
+    if (apply) apply.disabled = isGenerating || !latestLayoutResult;
+    if (pick) pick.disabled = isGenerating;
+    if (file) file.disabled = isGenerating;
+  }
 
   function setLayoutStatus(doc, message, isError) {
     var status = doc.querySelector("[data-layout-status]");
@@ -93,7 +122,10 @@
   }
 
   function applyLayoutAssets(context, payload) {
-    if (!payload) throw new Error("No layout payload available.");
+    if (!payload) throw new Error("请先生成当前工艺节点的版图产物。");
+    if (payload.process_node !== selectedProcessNode(context.document)) {
+      throw new Error("结果所属工艺节点与当前选择不一致，请重新生成。");
+    }
     latestLayoutResult = payload;
 
     var doc = context.document;
@@ -135,12 +167,16 @@
   function buildFormData(doc) {
     if (!selectedTdbFile) throw new Error("请先选择 .tdb 文件。");
     var formData = new FormData();
+    var processNode = selectedProcessNode(doc);
+    if (!processNode) throw new Error("请先选择工艺节点。");
     formData.append("tdb_file", selectedTdbFile, selectedTdbFile.name || "layout.tdb");
+    formData.append("process_node", processNode);
     return formData;
   }
 
   function generateLayoutAssets(context) {
     var doc = context.document;
+    if (isGenerating) return;
     var request;
     try {
       request = buildFormData(doc);
@@ -148,12 +184,22 @@
       setLayoutStatus(doc, error && error.message ? error.message : "请选择 .tdb 文件。", true);
       return;
     }
-    setLayoutStatus(doc, "正在生成功能框图、尺寸图、装配图和压点信息表…", false);
+    isGenerating = true;
+    latestLayoutResult = null;
+    updateLayoutButtons(doc);
+    var requestedNode = selectedProcessNode(doc);
+    setLayoutStatus(doc, "正在按所选工艺生成功能框图、尺寸图、装配图和压点信息表…", false);
     window.ProductManualApi.generateLayoutAssets(request).then(function (payload) {
+      if (selectedProcessNode(doc) !== requestedNode) {
+        throw new Error("工艺节点已变化，请重新生成。");
+      }
       applyLayoutAssets(context, payload);
-      setLayoutStatus(doc, "功能框图、尺寸图、装配图和压点信息表已生成并回填。", false);
+      setLayoutStatus(doc, "工艺“" + payload.process_label + "”的产物已生成并回填。", false);
     }).catch(function (error) {
-      setLayoutStatus(doc, error && error.message ? error.message : "Layout asset generation failed.", true);
+      setLayoutStatus(doc, error && error.message ? error.message : "版图产物生成失败。", true);
+    }).finally(function () {
+      isGenerating = false;
+      updateLayoutButtons(doc);
     });
   }
 
@@ -172,6 +218,37 @@
       if (isOpen) panel.scrollIntoView({ block: "nearest" });
     });
 
+    var processSelect = panel.querySelector("[data-process-node]");
+    latestLayoutResult = null;
+    processNodes = [];
+    updateLayoutButtons(doc);
+    if (processSelect) {
+      processSelect.addEventListener("change", function () {
+        latestLayoutResult = null;
+        updateProcessLayers(doc);
+        updateLayoutButtons(doc);
+        setLayoutStatus(doc, "工艺节点已切换，请点击“生成产物”重新生成。", false);
+      });
+      window.ProductManualApi.listProcessNodes().then(function (config) {
+        if (!panel.isConnected) return;
+        processNodes = config.nodes;
+        processSelect.replaceChildren();
+        processNodes.forEach(function (node) {
+          var option = doc.createElement("option");
+          option.value = node.id;
+          option.textContent = node.label;
+          processSelect.appendChild(option);
+        });
+        processSelect.value = config.default_node;
+        updateProcessLayers(doc);
+        updateLayoutButtons(doc);
+      }).catch(function (error) {
+        if (!panel.isConnected) return;
+        setLayoutStatus(doc, "读取工艺配置失败：" + error.message, true);
+        updateLayoutButtons(doc);
+      });
+    }
+
     var fileInput = panel.querySelector("[data-tdb-file-input]");
     var pickButton = panel.querySelector("[data-pick-tdb-file]");
     var generateButton = panel.querySelector("[data-generate-layout-assets]");
@@ -184,6 +261,8 @@
       });
       fileInput.addEventListener("change", function () {
         selectedTdbFile = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+        latestLayoutResult = null;
+        updateLayoutButtons(doc);
         updateSelectedFileName(doc);
         setLayoutStatus(doc, selectedTdbFile ? ("已选择文件：" + selectedTdbFile.name) : "尚未选择 .tdb 文件。", false);
       });
@@ -199,7 +278,7 @@
       applyButton.addEventListener("click", function () {
         try {
           applyLayoutAssets(context, latestLayoutResult);
-          setLayoutStatus(doc, "Re-applied the latest generated layout result.", false);
+          setLayoutStatus(doc, "已重新回填当前工艺节点的最近结果。", false);
         } catch (error) {
           setLayoutStatus(doc, error && error.message ? error.message : "No generated result available.", true);
         }

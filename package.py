@@ -16,6 +16,8 @@ REQUIRED = (
     "backend_v2/services/product_manual/product_manual_service.py",
     "backend_v2/models/product_manual_schemas.py",
     "backend_v2/config/config.yaml",
+    "backend_v2/config/process_nodes.json",
+    "backend_v2/config/process_nodes.py",
     "backend_v2/.env.example",
     "backend_v2/templates/数据指标模板.xlsx",
     "frontend_v2/dist/index.html",

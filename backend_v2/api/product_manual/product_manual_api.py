@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Body, Depends, FastAPI, File, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
@@ -118,15 +118,25 @@ def chat(
     return Result.success(ChatResponse.model_validate(data))
 
 
+@router.get("/layout/process-nodes", response_model=Result[dict])
+def list_process_nodes(service: ProductManualService = Depends(get_service)) -> Result[dict]:
+    """读取当前配置中的工艺节点及层名，供前端选择。"""
+    try:
+        return Result.success(service.list_process_nodes())
+    except LayoutServiceError as exc:
+        raise _translate_error(exc) from exc
+
+
 @router.post("/layout/generate-layout-assets", response_model=Result[LayoutAssetsResponse])
 async def generate_layout_assets(
     tdb_file: UploadFile = File(...),
+    process_node: str | None = Form(None),
     service: ProductManualService = Depends(get_service),
 ) -> Result[LayoutAssetsResponse]:
     """将上传文件交给服务层处理；返回统一信封。"""
     try:
         data = await run_in_threadpool(
-            service.generate_layout_upload, tdb_file.filename, tdb_file.file
+            service.generate_layout_upload, tdb_file.filename, tdb_file.file, process_node
         )
     except LayoutServiceError as exc:
         raise _translate_error(exc) from exc

@@ -6,8 +6,14 @@ import shutil
 import subprocess
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
+from config.process_nodes import (
+    ProcessConfigError,
+    load_process_config,
+    select_process_node,
+)
 from config.settings import Settings as ApplicationSettings
 
 
@@ -48,24 +54,55 @@ class LayoutService:
     def __init__(self, settings: ApplicationSettings) -> None:
         self.settings = settings
 
-    def generate(self, filename: str, payload: bytes) -> dict[str, object]:
+    def list_process_nodes(self) -> dict[str, object]:
+        try:
+            config = load_process_config()
+        except ProcessConfigError as exc:
+            raise LayoutServiceError(str(exc), status_code=503) from exc
+        return {
+            "default_node": config["default_node"],
+            "nodes": [{"id": key, **node} for key, node in config["nodes"].items()],
+        }
+
+    def generate(
+        self, filename: str, payload: bytes, process_node: str | None = None
+    ) -> dict[str, object]:
         safe_filename = Path(filename or "layout.tdb").name
         if Path(safe_filename).suffix.lower() != ".tdb":
             raise LayoutServiceError("仅支持 .tdb 文件", status_code=400)
         if not payload:
             raise LayoutServiceError("上传的 .tdb 文件为空", status_code=400)
 
+        try:
+            config = load_process_config()
+        except ProcessConfigError as exc:
+            raise LayoutServiceError(str(exc), status_code=503) from exc
+        try:
+            node = select_process_node(config, process_node)
+        except ProcessConfigError as exc:
+            raise LayoutServiceError(str(exc), status_code=400) from exc
+
         temporary_root = Path(tempfile.mkdtemp(prefix="preinstalled-manual-layout-"))
         temporary_tdb = temporary_root / safe_filename
         try:
             temporary_tdb.write_bytes(payload)
-            model_output_root = self.settings.output_root / temporary_tdb.stem
+            model_output_root = (
+                self.settings.output_root / node["id"] / temporary_tdb.stem / uuid.uuid4().hex
+            )
             model_output_root.mkdir(parents=True, exist_ok=True)
-            return self._run_pipeline(temporary_tdb, model_output_root)
+            # 固定本次生成配置，避免生成期间修改配置文件造成节点与结果不一致。
+            snapshot = model_output_root / "process_nodes.snapshot.json"
+            snapshot.write_text(json.dumps({
+                "default_node": node["id"],
+                "nodes": {node["id"]: {"label": node["label"], "layers": node["layers"]}},
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
+            return self._run_pipeline(temporary_tdb, model_output_root, node, snapshot)
         finally:
             self._cleanup(temporary_root)
 
-    def _run_pipeline(self, tdb_path: Path, output_root: Path) -> dict[str, object]:
+    def _run_pipeline(
+        self, tdb_path: Path, output_root: Path, node: dict[str, object], config_path: Path
+    ) -> dict[str, object]:
         command = [
             str(self.settings.pipeline_python),
             str(self.settings.pipeline_script),
@@ -74,6 +111,8 @@ class LayoutService:
             str(output_root),
             "--runner-python",
             str(self.settings.runner_python),
+            "--process-node", str(node["id"]),
+            "--process-config", str(config_path),
         ]
         if self.settings.ledit_exe is not None:
             command.extend(["--ledit-exe", str(self.settings.ledit_exe)])
@@ -104,6 +143,9 @@ class LayoutService:
 
         return {
             "model_id": tdb_path.stem,
+            "process_node": node["id"],
+            "process_label": node["label"],
+            "process_layers": node["layers"],
             "dimension_image_data_url": _image_to_data_url(paths["dimension"]),
             "function_block_image_data_url": _image_to_data_url(paths["function_block"]),
             "function_block_scene": _read_json(paths["function_block_scene"]),
